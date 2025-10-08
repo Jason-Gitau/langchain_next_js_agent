@@ -1,0 +1,36 @@
+version: '3.8'
+services:
+  web:
+    build:
+      context: .
+      target: runner
+    ports:
+      - '3000:3000'
+    env_file: .env
+    volumes:
+      - ./:/app:delegated
+    depends_on:
+      - backend
+
+  backend:
+    build:
+      context: ./backend
+    ports:
+      - '4000:4000'
+    env_file: .env
+    volumes:
+      - ./backend:/app:delegated
+
+  worker:
+    build:
+      context: ./backend
+    command: npm run worker
+    env_file: .env
+    depends_on:
+      - redis
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - '6379:6379'

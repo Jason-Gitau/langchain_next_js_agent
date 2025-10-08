@@ -1,140 +1,62 @@
-import { NextRequest, NextResponse } from "next/server";
-import { Message as VercelChatMessage, StreamingTextResponse } from "ai";
-
-import { createReactAgent } from "@langchain/langgraph/prebuilt";
-import { ChatOpenAI } from "@langchain/openai";
-import { SerpAPI } from "@langchain/community/tools/serpapi";
-import { Calculator } from "@langchain/community/tools/calculator";
-import {
-  AIMessage,
-  BaseMessage,
-  ChatMessage,
-  HumanMessage,
-  SystemMessage,
-} from "@langchain/core/messages";
-
-export const runtime = "edge";
-
-const convertVercelMessageToLangChainMessage = (message: VercelChatMessage) => {
-  if (message.role === "user") {
-    return new HumanMessage(message.content);
-  } else if (message.role === "assistant") {
-    return new AIMessage(message.content);
-  } else {
-    return new ChatMessage(message.content, message.role);
-  }
-};
-
-const convertLangChainMessageToVercelMessage = (message: BaseMessage) => {
-  if (message._getType() === "human") {
-    return { content: message.content, role: "user" };
-  } else if (message._getType() === "ai") {
-    return {
-      content: message.content,
-      role: "assistant",
-      tool_calls: (message as AIMessage).tool_calls,
-    };
-  } else {
-    return { content: message.content, role: message._getType() };
-  }
-};
-
-const AGENT_SYSTEM_TEMPLATE = `You are a talking parrot named Polly. All final responses must be how a talking parrot would respond. Squawk often!`;
+import { NextRequest, NextResponse } from 'next/server';
 
 /**
- * This handler initializes and calls an tool caling ReAct agent.
- * See the docs for more information:
+ * Chat agents route proxy / local POC
  *
- * https://langchain-ai.github.io/langgraphjs/tutorials/quickstart/
+ * Behavior:
+ * - If a BACKEND_URL / NEXT_PUBLIC_BACKEND_URL is configured, forward the request to
+ *   `${BACKEND_URL}/chat/agents` and stream/pipe the response back to the client.
+ * - Otherwise return a small simulated streaming response so the UI shows activity.
  */
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const returnIntermediateSteps = body.show_intermediate_steps;
-    /**
-     * We represent intermediate steps as system messages for display purposes,
-     * but don't want them in the chat history.
-     */
-    const messages = (body.messages ?? [])
-      .filter(
-        (message: VercelChatMessage) =>
-          message.role === "user" || message.role === "assistant",
-      )
-      .map(convertVercelMessageToLangChainMessage);
+    const backendUrl =
+      process.env.NEXT_PUBLIC_BACKEND_URL || process.env.BACKEND_URL || '';
 
-    // Requires process.env.SERPAPI_API_KEY to be set: https://serpapi.com/
-    // You can remove this or use a different tool instead.
-    const tools = [new Calculator(), new SerpAPI()];
-    const chat = new ChatOpenAI({
-      model: "gpt-4o-mini",
-      temperature: 0,
-    });
-
-    /**
-     * Use a prebuilt LangGraph agent.
-     */
-    const agent = createReactAgent({
-      llm: chat,
-      tools,
-      /**
-       * Modify the stock prompt in the prebuilt agent. See docs
-       * for how to customize your agent:
-       *
-       * https://langchain-ai.github.io/langgraphjs/tutorials/quickstart/
-       */
-      messageModifier: new SystemMessage(AGENT_SYSTEM_TEMPLATE),
-    });
-
-    if (!returnIntermediateSteps) {
-      /**
-       * Stream back all generated tokens and steps from their runs.
-       *
-       * We do some filtering of the generated events and only stream back
-       * the final response as a string.
-       *
-       * For this specific type of tool calling ReAct agents with OpenAI, we can tell when
-       * the agent is ready to stream back final output when it no longer calls
-       * a tool and instead streams back content.
-       *
-       * See: https://langchain-ai.github.io/langgraphjs/how-tos/stream-tokens/
-       */
-      const eventStream = await agent.streamEvents(
-        { messages },
-        { version: "v2" },
-      );
-
-      const textEncoder = new TextEncoder();
-      const transformStream = new ReadableStream({
-        async start(controller) {
-          for await (const { event, data } of eventStream) {
-            if (event === "on_chat_model_stream") {
-              // Intermediate chat model generations will contain tool calls and no content
-              if (!!data.chunk.content) {
-                controller.enqueue(textEncoder.encode(data.chunk.content));
-              }
-            }
-          }
-          controller.close();
-        },
+    if (backendUrl) {
+      // Forward request to external backend (assumed to implement /chat/agents)
+      const upstream = await fetch(`${backendUrl.replace(/\/$/, '')}/chat/agents`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
       });
 
-      return new StreamingTextResponse(transformStream);
-    } else {
-      /**
-       * We could also pick intermediate steps out from `streamEvents` chunks, but
-       * they are generated as JSON objects, so streaming and displaying them with
-       * the AI SDK is more complicated.
-       */
-      const result = await agent.invoke({ messages });
-
-      return NextResponse.json(
-        {
-          messages: result.messages.map(convertLangChainMessageToVercelMessage),
-        },
-        { status: 200 },
-      );
+      // Stream upstream response back to client
+      const respBody = upstream.body;
+      const headers: Record<string, string> = {};
+      upstream.headers.forEach((value, key) => (headers[key] = value));
+      return new Response(respBody, { status: upstream.status, headers });
     }
+
+    // No backend configured: return a simulated streaming response for POC
+    const encoder = new TextEncoder();
+    const stream = new ReadableStream({
+      start(controller) {
+        const chunks = [
+          "🦜 Squawk! Hello, I'm Polly the parrot.\n",
+          "I'm a POC streaming response so you can see the UI working.\n",
+          "I'll pretend to fetch data and compose an answer...\n",
+          "Final answer: The weather in Honolulu is sunny (POC). Squawk!"
+        ];
+
+        let i = 0;
+        const push = () => {
+          if (i < chunks.length) {
+            controller.enqueue(encoder.encode(chunks[i]));
+            i += 1;
+            setTimeout(push, 400 + Math.random() * 400);
+          } else {
+            controller.close();
+          }
+        };
+
+        push();
+      },
+    });
+
+    return new Response(stream, { headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
   } catch (e: any) {
-    return NextResponse.json({ error: e.message }, { status: e.status ?? 500 });
+    return NextResponse.json({ error: e.message }, { status: 500 });
   }
 }
