@@ -47,7 +47,68 @@ You can start editing the page by modifying `app/page.tsx`. The page auto-update
 
 Backend logic lives in `app/api/chat/route.ts`. From here, you can change the prompt and model, or add other modules and logic.
 
-## 🧱 Structured Output
+## � How to run this project locally (POC)
+
+This repository ships a Next.js frontend and a backend scaffold under `backend/` that demonstrates how to run LangChain logic and stream events via Socket.IO + Redis. The frontend is intentionally a thin client that proxies heavy LLM work to the backend (or to an external LangChain service).
+
+Prerequisites
+- Node 20+ and npm or yarn
+- Docker & Docker Compose (optional, but recommended for full-stack)
+
+Quick start (frontend only - fast)
+1. Install frontend deps and run dev server:
+
+```bash
+npm install
+npm run dev
+```
+
+2. Open http://localhost:3000 and try the Agents page — if no backend is configured, a simulated streaming response will show so you can test the UI.
+
+Full local stack (backend + worker + redis) using Docker Compose
+1. Copy the example env and edit `.env`:
+
+```bash
+cp .env.example .env
+# Edit .env and add any secrets you need (you can leave model keys empty to use POC simulation)
+```
+
+2. Start the stack:
+
+```bash
+docker compose up --build
+```
+
+3. Visit http://localhost:3000 (frontend) and the backend will be available at http://localhost:4000.
+
+Running backend & worker locally (without Docker)
+```bash
+cd backend
+npm install
+npm run dev    # starts server (Express + Socket.IO)
+npm run worker # in another terminal, starts worker that simulates agent runs
+```
+
+How the POC works
+- `app/api/chat/agents` will proxy to an external backend if `BACKEND_URL` or `NEXT_PUBLIC_BACKEND_URL` is set. Otherwise it returns a simulated streaming response so you can test the UI without any model keys.
+- To enable real LLM/embedding runs, point the frontend to your LangChain backend (Python or Node) and expose endpoints like `/chat/agents` and `/ingest`.
+
+CI, Docker images and GitHub Actions
+- A GitHub Actions workflow is added at `.github/workflows/ci.yml`. It builds the Next.js app on push and PR to `main`.
+- If you want Actions to build and push Docker images, add these repository secrets to your GitHub project:
+	- `DOCKERHUB_USERNAME`
+	- `DOCKERHUB_TOKEN` (or use another registry token)
+
+Secrets and security
+- Keep LLM keys (Gemini/OpenAI), Supabase private keys, and DB credentials out of the frontend. Only place them in backend secrets. Locally, use `.env` (do not commit it).
+- In production use your cloud provider's secret manager (GitHub secrets, AWS Secrets Manager, GCP Secret Manager, etc.).
+
+Next steps you can ask me to do
+- Port the ingest route to the backend using your preferred LLM/embedding provider.
+- Wire the backend to an external Python LangChain service and proxy calls.
+- Add GitHub Actions to build images and deploy to your platform of choice.
+
+## �🧱 Structured Output
 
 The second example shows how to have a model return output according to a specific schema using OpenAI Functions.
 Click the `Structured Output` link in the navbar to try it out:
